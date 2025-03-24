@@ -199,15 +199,15 @@ class ResidualAttentionBlock(nn.Module):
 
 # LoRA implementation of ResidualAttentionBlock:
 class LoRAResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, r=4):
+    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, r=4, lora_alpha=1):
         super().__init__()
 
-        self.attn = lora.MultiheadAttention(d_model, n_head, r=r) # LoRA rank set as 4
+        self.attn = lora.MultiheadAttention(d_model, n_head, r=r, lora_alpha=lora_alpha) # LoRA rank set as 4
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
-            ("c_fc", lora.Linear(d_model, d_model * 4, r=r)),
+            ("c_fc", lora.Linear(d_model, d_model * 4, r=r, lora_alpha=lora_alpha)),
             ("gelu", QuickGELU()),
-            ("c_proj", lora.Linear(d_model * 4, d_model, r=r))
+            ("c_proj", lora.Linear(d_model * 4, d_model, r=r, lora_alpha=lora_alpha))
         ]))
         self.ln_2 = LayerNorm(d_model)
         self.attn_mask = attn_mask
@@ -235,11 +235,11 @@ class Transformer(nn.Module):
 
 # LoRA implementation of Transformer:
 class LoRATransformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None, r = 4):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None, r = 4, lora_alpha=1):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.resblocks = nn.Sequential(*[LoRAResidualAttentionBlock(width, heads, attn_mask, r=r) for _ in range(layers)])
+        self.resblocks = nn.Sequential(*[LoRAResidualAttentionBlock(width, heads, attn_mask, r=r, lora_alpha=lora_alpha) for _ in range(layers)])
 
     def forward(self, x: torch.Tensor):
         return self.resblocks(x)
@@ -283,11 +283,11 @@ class VisionTransformer(nn.Module):
 
 
 class LoRAVisionTransformer(nn.Module):
-    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int, r: int):
+    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int, r: int, lora_alpha: int):
         super().__init__()
         self.input_resolution = input_resolution
         self.output_dim = output_dim
-        self.conv1 = lora.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
+        self.conv1 = lora.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False, lora_alpha=lora_alpha)
 
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
@@ -466,6 +466,7 @@ class LoRACLIP(nn.Module):
                  transformer_heads: int,
                  transformer_layers: int,
                  r: int,
+                 lora_alpha: int,
                  lora_mode: str
                  ):
         super().__init__()
@@ -492,7 +493,8 @@ class LoRACLIP(nn.Module):
                     layers=vision_layers,
                     heads=vision_heads,
                     output_dim=embed_dim,
-                    r=r
+                    r=r,
+                    lora_alpha=lora_alpha,
                 )
             else:
                 self.visual = VisionTransformer(
@@ -510,7 +512,8 @@ class LoRACLIP(nn.Module):
                 layers=transformer_layers,
                 heads=transformer_heads,
                 attn_mask=self.build_attention_mask(),
-                r = r
+                r = r,
+                lora_alpha=lora_alpha
             )
         
         else:
@@ -530,8 +533,8 @@ class LoRACLIP(nn.Module):
         self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
         
         if "text" in lora_mode:
-            self.lora_text_projection = lora.Linear(transformer_width, embed_dim, r=r, bias=False)
-            self.token_embedding = lora.Embedding(vocab_size, transformer_width, r=r)
+            self.lora_text_projection = lora.Linear(transformer_width, embed_dim, r=r, lora_alpha=lora_alpha, bias=False)
+            self.token_embedding = lora.Embedding(vocab_size, transformer_width, r=r, lora_alpha=lora_alpha)
         
         else:
             self.lora_text_projection = nn.Linear(transformer_width, embed_dim, bias=False)
@@ -678,7 +681,7 @@ def build_model(state_dict: dict):
     model.load_state_dict(state_dict)
     return model.eval()
 
-def build_LoRA_model(state_dict: dict, r: int, lora_mode: str):
+def build_LoRA_model(state_dict: dict, r: int, lora_mode: str, lora_alpha: int):
     vit = "visual.proj" in state_dict
 
     if vit:
@@ -707,7 +710,7 @@ def build_LoRA_model(state_dict: dict, r: int, lora_mode: str):
         embed_dim,
         image_resolution, vision_layers, vision_width, vision_patch_size,
         context_length, vocab_size, transformer_width, transformer_heads, transformer_layers, 
-        r, lora_mode
+        r, lora_alpha, lora_mode
     )
 
     for key in ["input_resolution", "context_length", "vocab_size"]:

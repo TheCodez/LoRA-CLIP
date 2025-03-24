@@ -98,6 +98,7 @@ def load(name: str,
          jit: bool = False,
          download_root: str = None,
          r: int = 4,
+         lora_alpha: int = 1,
          lora_mode: str = "vision+text"
     ):
     """Load a CLIP model
@@ -118,6 +119,9 @@ def load(name: str,
 
     r : int
         Rank of the LoRA matrices
+
+    lora_alpha: int
+        Scaling factor for adaptive re-parameterization
 
     Returns
     -------
@@ -147,7 +151,7 @@ def load(name: str,
             state_dict = torch.load(opened_file, map_location="cpu")
 
     if not jit:
-        model = build_LoRA_model(state_dict or model.state_dict(), r, lora_mode).to(device)
+        model = build_LoRA_model(state_dict or model.state_dict(), r, lora_mode, lora_alpha).to(device)
         if str(device) == "cpu":
             model.float()
         return model, _transform(model.visual.input_resolution)
